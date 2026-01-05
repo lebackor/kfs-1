@@ -1,35 +1,18 @@
-# KFS-1 Scroll & Delete Fix Explanation
+# KFS-1 Terminal Fixes
 
-## The Issue
-The original kernel implementation had a bug in the terminal scrolling logic. The `input_start_row` and `input_start_col` variables define the "barrier" that prevents the user from backspacing into the command prompt or previous output.
+## 1. Scroll & Delete Barrier Fix
+**Issue**: Original code had a fixed "input barrier" that forbade backspacing. When the terminal scrolled (destructively), this barrier didn't move, locking the user out of editing valid text.
+**Fix**: Input barrier now tracks the logical row index in the history buffer.
 
-However, when the terminal screen filled up and scrolled (moving all text up by one line), these barrier coordinates remained static. This meant that:
-1. The text physically moved up.
-2. The protection barrier stayed at the old row.
-3. As a result, valid user input on the new lines ended up "behind" the barrier, making it impossible to delete or modify.
+## 2. Spinner Artifact Fix
+**Issue**: Backspacing on the top line dragged the "Heartbeat" spinner (from column 79) across the screen.
+**Fix**: `terminal_putchar` backspace logic now protects column 79 on logical Row 0, preventing the spinner from being shifted.
 
-## The Fix
-We modified `terminal_scroll()` in `kernel.c` to dynamically update the protection boundary:
-
-```c
-    /* Update input protection boundary so it moves up with the text */
-    if (input_start_row > 0) {
-        input_start_row--;
-    } else {
-        /* Boundry scrolled off screen */
-        input_start_row = 0;
-        input_start_col = 0;
-    }
-```
-
-Now, whenever the screen scrolls, the barrier moves up with it, preserving the relationship between the prompt and the user's input.
-
-## Spinner Artifact Fix
-When backspacing on the first line (Row 0), the "ripple delete" logic was shifting the entire line to the left. This included index 79, which contains the "Heartbeat" spinner used to prove the kernel is running. As a result, backspacing on row 0 would drag copies of the spinner across the screen.
-
-We patched `terminal_putchar` to respect the spinner's reserved zone:
-```c
-/* Protect Heartbeat: If on row 0, don't pull index 79 into 78 */
-size_t max_col = (terminal_row == 0) ? (VGA_WIDTH - 2) : (VGA_WIDTH - 1);
-```
-On row 0, the shift loop now stops at column 78, leaving the spinner at column 79 untouched.
+## 3. Scrollback History (New!)
+**Issue**: Previous text was lost forever when scrolling down.
+**Fix**:
+- Implemented a **100-line History Buffer** (replacing the single 25-line screen buffer).
+- Implemented a **Viewport System**. The screen now acts as a window into this larger buffer.
+- **Auto-Scroll**: When typing past the bottom, the view scrolls down, but old lines are preserved in memory.
+- **Reverse Deletion**: You can now backspace all the way back up to previous lines ("remonter en supprimant"). The view will scroll up automatically.
+- **Manual Scrolling**: Use `PageUp` (Keypad 9) and `PageDown` (Keypad 3) to browse history without deleting.
