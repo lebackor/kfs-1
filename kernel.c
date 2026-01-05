@@ -424,15 +424,9 @@ void keyboard_handler() {
 
                 if (terminal_row > 0) terminal_row--;
                 
-                /* Clamp column to end of text on new line */
-                /* (logic omitted for simplicity, just letting it float is standard for basic terminals) */
-                if (terminal_row > 0) terminal_row--;
-                
                 /* Auto-scroll up */
                 if (terminal_row < terminal_view_row) terminal_view_row = terminal_row;
 
-                /* Clamp column to end of text on new line */
-                /* (logic omitted for simplicity, just letting it float is standard for basic terminals) */
                 refresh_screen();
                 return;
             }
