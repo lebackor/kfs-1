@@ -1,0 +1,386 @@
+/*
+ * kernel.c - Full Featured Kernel (Bonuses Implemented)
+ */
+
+#include <stddef.h>
+#include <stdint.h>
+#include <stdarg.h>
+#include "io.h"
+#include "keyboard.h"
+
+/* --- System Constants --- */
+static const size_t VGA_WIDTH = 80;
+static const size_t VGA_HEIGHT = 25;
+uint16_t* terminal_buffer = (uint16_t*) 0xB8000;
+
+/* --- State Management --- */
+typedef struct {
+	size_t row;
+	size_t column;
+	uint8_t color;
+	uint16_t buffer[80 * 25]; // Backup buffer
+} ScreenState;
+
+ScreenState screens[3]; // We support 3 screens (F1, F2, F3)
+int current_screen = 0;
+
+/* Global current state (matches the visible hardware) */
+size_t terminal_row;
+size_t terminal_column;
+uint8_t terminal_color;
+
+/* --- Hardware Colors --- */
+enum vga_color {
+	VGA_COLOR_BLACK = 0, VGA_COLOR_BLUE = 1, VGA_COLOR_GREEN = 2, VGA_COLOR_CYAN = 3,
+	VGA_COLOR_RED = 4, VGA_COLOR_MAGENTA = 5, VGA_COLOR_BROWN = 6, VGA_COLOR_LIGHT_GREY = 7,
+	VGA_COLOR_DARK_GREY = 8, VGA_COLOR_LIGHT_BLUE = 9, VGA_COLOR_LIGHT_GREEN = 10,
+	VGA_COLOR_LIGHT_CYAN = 11, VGA_COLOR_LIGHT_RED = 12, VGA_COLOR_LIGHT_MAGENTA = 13,
+	VGA_COLOR_YELLOW = 14, VGA_COLOR_WHITE = 15,
+};
+
+static inline uint8_t vga_entry_color(enum vga_color fg, enum vga_color bg) {
+	return fg | bg << 4;
+}
+
+static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
+	return (uint16_t) uc | (uint16_t) color << 8;
+}
+
+/* --- Helper: Memory Move (since we have no libc) --- */
+void* memmove(void* dstptr, const void* srcptr, size_t size) {
+	unsigned char* dst = (unsigned char*) dstptr;
+	const unsigned char* src = (const unsigned char*) srcptr;
+	if (dst < src) {
+		for (size_t i = 0; i < size; i++)
+			dst[i] = src[i];
+	} else {
+		for (size_t i = size; i != 0; i--)
+			dst[i-1] = src[i-1];
+	}
+	return dstptr;
+}
+
+size_t strlen(const char* str) {
+	size_t len = 0;
+	while (str[len]) len++;
+	return len;
+}
+
+/* --- Hardware Cursor --- */
+void update_cursor(int x, int y) {
+	uint16_t pos = y * VGA_WIDTH + x;
+	outb(0x3D4, 0x0F);
+	outb(0x3D5, (uint8_t) (pos & 0xFF));
+	outb(0x3D4, 0x0E);
+	outb(0x3D5, (uint8_t) ((pos >> 8) & 0xFF));
+}
+
+/* --- Terminal Logic --- */
+void terminal_initialize(void) {
+	/* init screens */
+	for(int i=0; i<3; i++) {
+		screens[i].row = 0;
+		screens[i].column = 0;
+		screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+		for (size_t y = 0; y < VGA_HEIGHT; y++) {
+			for (size_t x = 0; x < VGA_WIDTH; x++) {
+				screens[i].buffer[y * VGA_WIDTH + x] = vga_entry(' ', screens[i].color);
+			}
+		}
+	}
+	/* load screen 0 */
+	terminal_row = 0;
+	terminal_column = 0;
+	terminal_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+	/* copy blank state to vga memory */
+	memmove(terminal_buffer, screens[0].buffer, VGA_WIDTH*VGA_HEIGHT*2);
+}
+
+void terminal_scroll() {
+	// Move line 1-24 to 0-23
+	for (size_t y = 0; y < VGA_HEIGHT - 1; y++) {
+		for (size_t x = 0; x < VGA_WIDTH; x++) {
+			terminal_buffer[y * VGA_WIDTH + x] = terminal_buffer[(y + 1) * VGA_WIDTH + x];
+		}
+	}
+	// Clear last line
+	for (size_t x = 0; x < VGA_WIDTH; x++) {
+		terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+	}
+	terminal_row = VGA_HEIGHT - 1;
+}
+
+/* Protection boundaries */
+size_t input_start_row = 0;
+size_t input_start_col = 0;
+
+void set_input_boundary() {
+    input_start_row = terminal_row;
+    input_start_col = terminal_column;
+}
+
+void terminal_putchar(char c) {
+	if (c == '\n') {
+		terminal_row++;
+		terminal_column = 0;
+	} else if (c == '\b') {
+        /* Check Protection: Don't backspace behind the prompt */
+        if (terminal_row < input_start_row || (terminal_row == input_start_row && terminal_column <= input_start_col)) {
+            return; // Create "wall"
+        }
+
+        /* Smart Backspace Logic */
+        if (terminal_column > 0) {
+            terminal_column--;
+            
+            /* Ripple Delete: Shift all characters on this line to the left */
+            /* From new terminal_column to VGA_WIDTH-1 */
+            size_t start_pos = terminal_row * VGA_WIDTH + terminal_column;
+            size_t end_of_line = terminal_row * VGA_WIDTH + (VGA_WIDTH - 1);
+            
+            for (size_t i = start_pos; i < end_of_line; i++) {
+                terminal_buffer[i] = terminal_buffer[i+1];
+            }
+            /* Clear last char of line */
+            terminal_buffer[end_of_line] = vga_entry(' ', terminal_color);
+            
+        } else if (terminal_row > 0) {
+            /* Wrap to previous line */
+            /* (Only wrap if we are deleting from start of line) */
+             
+            /* Scan for the last non-space character on the previous line */
+            size_t prev_row = terminal_row - 1;
+            int found_col = -1;
+            for (int x = VGA_WIDTH - 1; x >= 0; x--) {
+                uint16_t entry = terminal_buffer[prev_row * VGA_WIDTH + x];
+                if ((entry & 0xFF) != ' ') {
+                    found_col = x;
+                    break;
+                }
+            }
+            
+            terminal_row--;
+            if (found_col == -1) {
+                terminal_column = 0; 
+            } else {
+                terminal_column = found_col + 1;
+                if (terminal_column >= VGA_WIDTH) terminal_column = VGA_WIDTH - 1; 
+            }
+            
+            /* Logic for wrapping delete is complex (pulling from next line?), 
+             * for now we just delete the char we landed on (standard behavior) */
+             terminal_buffer[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
+        }
+    } else {
+		terminal_buffer[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(c, terminal_color);
+		terminal_column++;
+	}
+
+	if (terminal_column >= VGA_WIDTH) {
+		terminal_column = 0;
+		terminal_row++;
+	}
+	if (terminal_row >= VGA_HEIGHT) {
+		terminal_scroll();
+	}
+	update_cursor(terminal_column, terminal_row);
+}
+
+void terminal_write(const char* data, size_t size) {
+	for (size_t i = 0; i < size; i++)
+		terminal_putchar(data[i]);
+}
+
+void terminal_writestring(const char* data) {
+	terminal_write(data, strlen(data));
+}
+
+/* --- Printf Implementation --- */
+/* A minimal implementation of printf supporting %s, %d, %x, %c */
+void printk(const char* format, ...) {
+	va_list args;
+	va_start(args, format);
+
+	for (const char* p = format; *p != '\0'; p++) {
+		if (*p != '%') {
+			terminal_putchar(*p);
+			continue;
+		}
+		p++; // Skip '%'
+		switch (*p) {
+			case 'c': {
+				char c = (char) va_arg(args, int);
+				terminal_putchar(c);
+				break;
+			}
+			case 's': {
+				const char* s = va_arg(args, const char*);
+				terminal_writestring(s);
+				break;
+			}
+			case 'd': {
+				int d = va_arg(args, int);
+				if (d < 0) {
+					terminal_putchar('-');
+					d = -d;
+				}
+				char buf[16];
+				int i = 0;
+				if (d == 0) buf[i++] = '0';
+				while (d > 0) {
+					buf[i++] = (d % 10) + '0';
+					d /= 10;
+				}
+				while (i > 0) terminal_putchar(buf[--i]);
+				break;
+			}
+			case 'x': {
+				unsigned int x = va_arg(args, unsigned int);
+				char buf[16];
+				int i = 0;
+				if (x == 0) buf[i++] = '0';
+				while (x > 0) {
+					int digit = x % 16;
+					buf[i++] = (digit < 10) ? (digit + '0') : (digit - 10 + 'a');
+					x /= 16;
+				}
+				while (i > 0) terminal_putchar(buf[--i]);
+				break;
+			}
+		}
+	}
+	va_end(args);
+}
+
+/* --- Screen Switching --- */
+void switch_screen(int screen_index) {
+	if (screen_index == current_screen) return;
+	
+	/* Save current screen to memory */
+	screens[current_screen].row = terminal_row;
+	screens[current_screen].column = terminal_column;
+	screens[current_screen].color = terminal_color;
+	memmove(screens[current_screen].buffer, terminal_buffer, VGA_WIDTH*VGA_HEIGHT*2);
+
+	/* Switch index */
+	current_screen = screen_index;
+
+	/* Restore new screen from memory */
+	terminal_row = screens[current_screen].row;
+	terminal_column = screens[current_screen].column;
+	terminal_color = screens[current_screen].color;
+	memmove(terminal_buffer, screens[current_screen].buffer, VGA_WIDTH*VGA_HEIGHT*2);
+	
+	update_cursor(terminal_column, terminal_row);
+}
+
+/* --- Keyboard Handling --- */
+void keyboard_handler() {
+    /* Read status from keyboard controller */
+    uint8_t status = inb(0x64);
+    
+    /* If status bit 0 is set, data is available */
+    if (status & 0x01) {
+        uint8_t scancode = inb(0x60);
+        
+        /* Check if key released (highest bit set) - ignore for now */
+        if (scancode & 0x80) {
+            // Key release logic
+        } else {
+			/* Key Pressed */
+			
+            /* F1, F2, F3 for screen switching */
+            if (scancode == 0x3B) { switch_screen(0); return; }
+            if (scancode == 0x3C) { switch_screen(1); return; }
+            if (scancode == 0x3D) { switch_screen(2); return; }
+
+            /* Arrow Keys (Extended 0xE0 scancodes usually, but simpler set 1 check) */
+            /* Up: 0x48, Left: 0x4B, Right: 0x4D, Down: 0x50 */
+            if (scancode == 0x4B) { // Left
+                /* Constraint: Don't move left into protected area */
+                if (terminal_row == input_start_row && terminal_column <= input_start_col) return;
+                
+                if (terminal_column > 0) terminal_column--;
+                update_cursor(terminal_column, terminal_row);
+                return;
+            }
+            if (scancode == 0x4D) { // Right
+                /* Constraint: Don't move right into empty void */
+                /* Check if there is a character at the current position */
+                uint16_t entry = terminal_buffer[terminal_row * VGA_WIDTH + terminal_column];
+                if ((entry & 0xFF) == ' ') return; // End of text on this line?
+                
+                if (terminal_column < VGA_WIDTH - 1) terminal_column++;
+                update_cursor(terminal_column, terminal_row);
+                return;
+            }
+            if (scancode == 0x48) { // Up
+                /* Constraint: Don't go up into read-only history */
+                if (terminal_row <= input_start_row) return;
+
+                if (terminal_row > 0) terminal_row--;
+                
+                /* Clamp column to end of text on new line */
+                /* (logic omitted for simplicity, just letting it float is standard for basic terminals) */
+                update_cursor(terminal_column, terminal_row);
+                return;
+            }
+            if (scancode == 0x50) { // Down
+                /* Constraint: Don't go down into empty void */
+                 uint16_t entry = terminal_buffer[(terminal_row + 1) * VGA_WIDTH + 0];
+                 if ((entry & 0xFF) == ' ' && terminal_row >= input_start_row) return; /* Next line is empty */
+
+                if (terminal_row < VGA_HEIGHT - 1) terminal_row++;
+                update_cursor(terminal_column, terminal_row);
+                return;
+            }
+
+            /* Normal Typing */
+            if (scancode < 128 && kbdus[scancode]) {
+                terminal_putchar(kbdus[scancode]);
+            }
+        }
+    }
+}
+
+/* --- Main --- */
+void kernel_main(void) {
+	/* Initialize terminal interface */
+	terminal_initialize();
+
+	printk("KFS-1 with Bonus\n");
+	printk("--------------------------------\n");
+	printk("Features: %s, %s, %s\n", "Scroll", "Colors", "Printf");
+	printk("Press F1/F2/F3 to switch screens.\n");
+	printk("Arrow Keys to move, Backspace to delete.\n");
+	printk("Type something: ");
+    
+    /* Set the boundary so user cannot delete the text above */
+    void set_input_boundary();
+    set_input_boundary();
+
+    /* Disable Interrupts: We are polling, and we have no IDT yet.
+     * If we enable interrupts (sti), the CPU will crash on the first timer tick! */
+    asm volatile("cli");
+
+	/* Heartbeat counter to prove kernel is running */
+    unsigned char spinner[] = {'|', '/', '-', '\\'};
+    int spin_idx = 0;
+    int tick = 0;
+
+    /* Flush keyboard buffer before starting */
+    while(inb(0x64) & 0x1) inb(0x60);
+
+	while(1) {
+        keyboard_handler();
+        
+        /* Update heartbeat every ~10000 loops */
+        /* direct buffer access used */
+        tick++;
+        if (tick % 10000 == 0) {
+            size_t heartbeat_idx = 0 * VGA_WIDTH + 79;
+            terminal_buffer[heartbeat_idx] = vga_entry(spinner[spin_idx], vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
+            spin_idx = (spin_idx + 1) % 4;
+        }
+	}
+}
