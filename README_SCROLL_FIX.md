@@ -23,3 +23,13 @@ We modified `terminal_scroll()` in `kernel.c` to dynamically update the protecti
 ```
 
 Now, whenever the screen scrolls, the barrier moves up with it, preserving the relationship between the prompt and the user's input.
+
+## Spinner Artifact Fix
+When backspacing on the first line (Row 0), the "ripple delete" logic was shifting the entire line to the left. This included index 79, which contains the "Heartbeat" spinner used to prove the kernel is running. As a result, backspacing on row 0 would drag copies of the spinner across the screen.
+
+We patched `terminal_putchar` to respect the spinner's reserved zone:
+```c
+/* Protect Heartbeat: If on row 0, don't pull index 79 into 78 */
+size_t max_col = (terminal_row == 0) ? (VGA_WIDTH - 2) : (VGA_WIDTH - 1);
+```
+On row 0, the shift loop now stops at column 78, leaving the spinner at column 79 untouched.

@@ -145,14 +145,17 @@ void terminal_putchar(char c) {
             terminal_column--;
             
             /* Ripple Delete: Shift all characters on this line to the left */
-            /* From new terminal_column to VGA_WIDTH-1 */
+            /* From new terminal_column to VGA_WIDTH-1 (or -2 if on row 0) */
             size_t start_pos = terminal_row * VGA_WIDTH + terminal_column;
-            size_t end_of_line = terminal_row * VGA_WIDTH + (VGA_WIDTH - 1);
+            
+            /* Protect Heartbeat: If on row 0, don't pull index 79 into 78 */
+            size_t max_col = (terminal_row == 0) ? (VGA_WIDTH - 2) : (VGA_WIDTH - 1);
+            size_t end_of_line = terminal_row * VGA_WIDTH + max_col;
             
             for (size_t i = start_pos; i < end_of_line; i++) {
                 terminal_buffer[i] = terminal_buffer[i+1];
             }
-            /* Clear last char of line */
+            /* Clear last char of line (or second to last if row 0) */
             terminal_buffer[end_of_line] = vga_entry(' ', terminal_color);
             
         } else if (terminal_row > 0) {
