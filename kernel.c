@@ -348,7 +348,7 @@ void kernel_main(void) {
 	/* Initialize terminal interface */
 	terminal_initialize();
 
-	printk("KFS-1 with Bonus\n");
+	printk("KFS-1 with Bonus 42\n");
 	printk("--------------------------------\n");
 	printk("Features: %s, %s, %s\n", "Scroll", "Colors", "Printf");
 	printk("Press F1/F2/F3 to switch screens.\n");

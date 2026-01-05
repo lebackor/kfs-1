@@ -52,10 +52,27 @@ Generate a bootable `kfs.iso` image (uses GRUB):
 make iso
 ```
 
-### 3. Run in QEMU
-Run the kernel directly in the QEMU emulator:
+### 3. Run in QEMU (from ISO only)
+The `qemu` target boots the ISO (it will error if `kfs.iso` is missing):
 ```bash
+make iso
 make qemu
+```
+For headless/terminal-only runs, call QEMU directly with your preferred display flags, e.g.:
+```bash
+qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
+```
+
+### Docker environment (no sudo on host)
+If you lack host sudo rights, build the provided image and run make inside it:
+```bash
+docker build -t kfs-env .
+docker run --rm -it -v "$PWD":/workspace kfs-env make iso
+```
+The container includes `mtools`, `xorriso`, and `grub-pc-bin` so `make iso` succeeds.
+For QEMU in the container without a GUI, run it directly:
+```bash
+docker run --rm -it -v "$PWD":/workspace kfs-env qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
 ```
 
 ### Clean

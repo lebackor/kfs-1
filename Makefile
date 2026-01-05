@@ -54,7 +54,7 @@ qemu: $(KERNEL)
 	@if [ -f $(ISO) ]; then \
 		qemu-system-i386 -cdrom $(ISO); \
 	else \
-		qemu-system-i386 -kernel $(KERNEL); \
+		echo "Error: ISO not found"; \
 	fi
 
 clean:

@@ -1,0 +1,6 @@
+kfs.bin
+kfs.iso
+*.o
+isodir
+boot.o
+kernel.o
