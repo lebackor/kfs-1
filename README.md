@@ -46,24 +46,24 @@ Compile the source code into a kernel binary (`kfs.bin`):
 make
 ```
 
-### 2. Create Bootable ISO
-Generate a bootable `kfs.iso` image (uses GRUB). This now runs the build inside the provided Docker image automatically (builds it if needed) and writes `kfs.iso` into the repo root:
+### 2. Create Bootable ISO (uses Docker automatically)
+Generate a bootable `kfs.iso` image. If the required tools (`grub-mkrescue`, `xorriso`, `mtools`) are not on the host, this target builds/uses the `kfs-env` Docker image automatically and writes `kfs.iso` into the repo root:
 ```bash
-make iso
+make iso        # builds/uses the Docker image automatically if needed
 ```
 
 ### 3. Run in QEMU (from ISO only)
-The `qemu` target boots the ISO (it will error if `kfs.iso` is missing):
+The `qemu` target boots the ISO. It depends on `kfs.iso`, so it will trigger `make iso` (and therefore Docker) if the ISO is missing:
 ```bash
-make iso
 make qemu
 ```
 For headless/terminal-only runs, call QEMU directly with your preferred display flags, e.g.:
 ```bash
 qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
 ```
-You can still call QEMU manually in a container if desired:
+You can also run QEMU inside the Docker image if you prefer to avoid host packages:
 ```bash
+docker build -t kfs-env .
 docker run --rm -it -v "$PWD":/workspace kfs-env qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
 ```
 

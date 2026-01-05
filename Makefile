@@ -1,25 +1,33 @@
-# Makefile for KFS-1
+CC = gcc # Compilateur C
+AS = as # Assembleur GNU
+LD = ld # Linker GNU
 
-# Compiler and Linker
-CC = gcc
-AS = as
-LD = ld
-
-# Flags
-# -m32: Compile for 32-bit x86
-# -ffreestanding: Directed to environment without standard library
-# -fno-builtin: Don't use built-in functions
-# -nostdlib: Don't link standard libraries
+# CFLAGS :
+#   -m32                : cible x86 32-bit
+#   -ffreestanding      : environnement "freestanding" (pas d'OS / pas de libc supposée)
+#   -fno-builtin        : interdit les builtins implicites (memcpy, etc.)
+#   -fno-exceptions     : pas d’exceptions C++ (inoffensif ici mais OK)
+#   -fno-stack-protector: désactive la protection de pile (souvent dépendante de libc/runtime)
+#   -nostdlib           : ne pas lier les libs standard
+#   -nodefaultlibs      : ne pas lier les libs par défaut
+#   -Wall -Wextra       : warnings utiles
 CFLAGS = -m32 -ffreestanding -fno-builtin -fno-exceptions -fno-stack-protector -nostdlib -nodefaultlibs -Wall -Wextra
+
+# ASFLAGS :
+#   --32 : assemble en 32-bit
 ASFLAGS = --32
+
+# LDFLAGS :
+#   -m elf_i386 : format ELF 32-bit (i386)
+#   -T linker.ld: script de link custom (layout mémoire/sections)
 LDFLAGS = -m elf_i386 -T linker.ld
 
-# Source files
+# Sources / Objets
 SOURCES_C = kernel.c
 SOURCES_S = boot.S
 OBJECTS = $(SOURCES_S:.S=.o) $(SOURCES_C:.c=.o)
 
-# Output binary
+# Output
 KERNEL = kfs.bin
 ISO = kfs.iso
 DOCKER_IMAGE = kfs-env
@@ -27,28 +35,40 @@ DOCKER_IMAGE = kfs-env
 # Targets
 all: $(KERNEL)
 
-# Link the kernel
+# Link (final)
+#   Le binaire final (kfs.bin) est produit en liant les objets ASM + C (boot.o et kernel.o).
+#   Dépendances implicites : si boot.o ou kernel.o change, kfs.bin est relinké.
 $(KERNEL): $(OBJECTS)
 	$(LD) $(LDFLAGS) -o $@ $^
 
-# Compile Assembly
+# Build des objets
 %.o: %.S
 	$(AS) $(ASFLAGS) -o $@ $<
 
-# Compile C
 %.o: %.c
 	$(CC) $(CFLAGS) -c $< -o $@
 
-# Create ISO (Requires grub-mkrescue / xorriso, and a 'grub.cfg')
-iso:
-	@if [ "$$IN_DOCKER" = "1" ]; then \
-		$(MAKE) iso_inner; \
-	else \
-		docker build -t $(DOCKER_IMAGE) .; \
-		docker run --rm -v "$(PWD)":/workspace -w /workspace -e IN_DOCKER=1 $(DOCKER_IMAGE) $(MAKE) iso_inner; \
-	fi
+# ISO bootable avec docker (GRUB)
+#   grub-mkrescue dépend de paquets (xorriso, grub-tools, etc.)
+#   qui ne sont pas installables facilement sur les machines.
+#
+# Fonctionnement :
+#   - build l'image Docker
+#   - lance un container en montant le repo courant dans /workspace sur le docker
+#   - exécute la "iso_inner" dans un environnement qui possede les paquets necessaire
+iso: $(ISO)
 
-iso_inner: $(KERNEL)
+$(ISO): $(KERNEL)
+	docker build -t $(DOCKER_IMAGE) .
+	docker run --rm -v ./:/workspace -w /workspace $(DOCKER_IMAGE) $(MAKE) iso_inner
+
+# Construction interne de l'ISO :
+#   1) Prépare l'arborescence GRUB : isodir/boot/grub
+#   2) Copie le kernel dans isodir/boot/
+#   3) Génère un grub.cfg minimal
+#   4) Construit l'ISO via grub-mkrescue
+#   5) Nettoie le dossier temporaire
+iso_inner:
 	mkdir -p isodir/boot/grub
 	cp $(KERNEL) isodir/boot/
 	echo 'menuentry "kfs-1" {' > isodir/boot/grub/grub.cfg
@@ -57,17 +77,17 @@ iso_inner: $(KERNEL)
 	grub-mkrescue -o $(ISO) isodir
 	rm -rf isodir
 
-# Run in QEMU (Requires qemu-system-i386)
-# Try to run ISO if available, else Kernel directly
-qemu: $(KERNEL)
-	@if [ -f $(ISO) ]; then \
-		qemu-system-i386 -cdrom $(ISO); \
-	else \
-		echo "Error: ISO not found"; \
-	fi
+# QEMU
+#   Lance l’ISO (reconstruit si besoin via la dépendance $(ISO)).
+qemu: $(ISO)
+	qemu-system-i386 -cdrom $(ISO)
 
 clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
 	rm -rf isodir
 
 .PHONY: all clean iso iso_inner qemu
+
+
+# kfs.bin = boot.o + kernel.o (assemble par le linker)
+# kfs.iso = kfs.bin + grub.cfg (assemble par grub-mkrescue qui ajoute l’amorce GRUB pour rendre l’ISO bootable.)
