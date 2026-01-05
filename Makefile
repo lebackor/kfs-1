@@ -22,6 +22,7 @@ OBJECTS = $(SOURCES_S:.S=.o) $(SOURCES_C:.c=.o)
 # Output binary
 KERNEL = kfs.bin
 ISO = kfs.iso
+DOCKER_IMAGE = kfs-env
 
 # Targets
 all: $(KERNEL)
@@ -39,7 +40,15 @@ $(KERNEL): $(OBJECTS)
 	$(CC) $(CFLAGS) -c $< -o $@
 
 # Create ISO (Requires grub-mkrescue / xorriso, and a 'grub.cfg')
-iso: $(KERNEL)
+iso:
+	@if [ "$$IN_DOCKER" = "1" ]; then \
+		$(MAKE) iso_inner; \
+	else \
+		docker build -t $(DOCKER_IMAGE) .; \
+		docker run --rm -v "$(PWD)":/workspace -w /workspace -e IN_DOCKER=1 $(DOCKER_IMAGE) $(MAKE) iso_inner; \
+	fi
+
+iso_inner: $(KERNEL)
 	mkdir -p isodir/boot/grub
 	cp $(KERNEL) isodir/boot/
 	echo 'menuentry "kfs-1" {' > isodir/boot/grub/grub.cfg
@@ -61,4 +70,4 @@ clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
 	rm -rf isodir
 
-.PHONY: all clean iso qemu
+.PHONY: all clean iso iso_inner qemu

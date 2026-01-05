@@ -47,7 +47,7 @@ make
 ```
 
 ### 2. Create Bootable ISO
-Generate a bootable `kfs.iso` image (uses GRUB):
+Generate a bootable `kfs.iso` image (uses GRUB). This now runs the build inside the provided Docker image automatically (builds it if needed) and writes `kfs.iso` into the repo root:
 ```bash
 make iso
 ```
@@ -62,15 +62,7 @@ For headless/terminal-only runs, call QEMU directly with your preferred display 
 ```bash
 qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
 ```
-
-### Docker environment (no sudo on host)
-If you lack host sudo rights, build the provided image and run make inside it:
-```bash
-docker build -t kfs-env .
-docker run --rm -it -v "$PWD":/workspace kfs-env make iso
-```
-The container includes `mtools`, `xorriso`, and `grub-pc-bin` so `make iso` succeeds.
-For QEMU in the container without a GUI, run it directly:
+You can still call QEMU manually in a container if desired:
 ```bash
 docker run --rm -it -v "$PWD":/workspace kfs-env qemu-system-i386 -nographic -serial mon:stdio -cdrom kfs.iso
 ```
