@@ -206,24 +206,12 @@ void terminal_putchar(char c) {
             
         } else if (terminal_row > 0) {
             /* Backspace Wrap */
-            /* Scan previous line for end */
-            size_t prev_row = terminal_row - 1;
-            int found_col = -1;
-            for (int x = VGA_WIDTH - 1; x >= 0; x--) {
-                uint16_t entry = history[prev_row * VGA_WIDTH + x];
-                if ((entry & 0xFF) != ' ') {
-                    found_col = x;
-                    break;
-                }
-            }
+            /* Standard Behavior: Go to the last column of the previous line. */
+            /* Don't scan for text, don't guess. Just go there. */
             
             terminal_row--;
-            if (found_col == -1) {
-                terminal_column = 0; 
-            } else {
-                terminal_column = found_col + 1;
-                if (terminal_column >= VGA_WIDTH) terminal_column = VGA_WIDTH - 1; 
-            }
+            terminal_column = VGA_WIDTH - 1;
+            
             history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
         }
         
