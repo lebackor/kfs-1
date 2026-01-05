@@ -203,6 +203,166 @@ flowchart TD
 
 ---
 
+### Step-by-Step Execution Order: `kernel.c`
+
+This section describes the **exact order** in which code executes when the kernel runs, with line numbers for reference.
+
+#### Phase 1: Global Initialization (Before `kernel_main`)
+
+When the kernel binary is loaded, the following global variables are initialized:
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 1 | 12-14 | `VGA_WIDTH`, `VGA_HEIGHT`, `HISTORY_LINES` | Constants are set (80, 25, 100). |
+| 2 | 15 | `vga_buffer = 0xB8000` | Pointer to VGA memory is set. |
+| 3 | 28 | `screens[3]` | Array of 3 `ScreenState` structs is allocated (uninitialized). |
+| 4 | 29 | `current_screen = 0` | Active screen index set to 0. |
+| 5 | 30-35 | `terminal_row`, etc. | Global "working copy" variables (uninitialized, set later). |
+| 6 | 38-39 | `input_start_row/col = 0` | Input protection boundary initialized. |
+
+---
+
+#### Phase 2: Entry Point (`kernel_main`, Line 474)
+
+Called by `boot.S` after stack setup. Execution proceeds **sequentially**:
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 7 | 476 | `terminal_initialize()` | **Jump to Line 119.** See Phase 2a. |
+| 8 | 478-483 | `printk(...)` × 5 | Print welcome messages. Each calls `terminal_putchar` for every character. See Phase 3. |
+| 9 | 486-487 | `set_input_boundary()` | **Jump to Line 184.** Saves current `terminal_row`/`terminal_column` as the "no delete" barrier. |
+| 10 | 491 | `asm volatile("cli")` | Disable CPU interrupts (we are polling). |
+| 11 | 493-496 | Spinner setup | Local variables for heartbeat animation. |
+| 12 | 499 | Flush keyboard | Read and discard any pending keypresses. |
+| 13 | 501 | `while(1)` | **Enter infinite main loop.** See Phase 4. |
+
+---
+
+#### Phase 2a: `terminal_initialize()` (Line 119)
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 7.1 | 121 | `for(int i=0; i<3; i++)` | Loop over 3 screens. |
+| 7.2 | 122-127 | `screens[i].row = 0`, etc. | Zero out cursor position, viewport, boundaries. |
+| 7.3 | 130-132 | Color assignment | Screen 0: Grey. Screen 1: Green. Screen 2: Cyan. |
+| 7.4 | 133-137 | Nested loop | Fill entire 100-line history buffer with blank spaces (8000 entries per screen). |
+| 7.5 | 140-143 | Load screen 0 | Copy `screens[0]` state to global working variables. |
+| 7.6 | 145 | `refresh_screen()` | **Jump to Line 105.** Copy viewport to VGA. See Phase 2b. |
+
+---
+
+#### Phase 2b: `refresh_screen()` (Line 105)
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 7.6.1 | 106 | `history = screens[current_screen].buffer` | Get pointer to current screen's history. |
+| 7.6.2 | 108 | `start_offset = terminal_view_row * 80` | Calculate where viewport starts in buffer. |
+| 7.6.3 | 113 | `memmove(vga_buffer, ...)` | Copy 4000 bytes (25 lines × 80 cols × 2 bytes) to VGA memory at `0xB8000`. |
+| 7.6.4 | 116 | `update_cursor(...)` | **Jump to Line 81.** See Phase 2c. |
+
+---
+
+#### Phase 2c: `update_cursor()` (Line 81)
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 7.6.4.1 | 83 | `physical_row = y - terminal_view_row` | Calculate cursor's position relative to viewport. |
+| 7.6.4.2 | 85-90 | If visible | Write cursor position to VGA ports `0x3D4`/`0x3D5` using `outb()`. |
+| 7.6.4.3 | 91-98 | Else | Move cursor off-screen (position 2000). |
+
+---
+
+#### Phase 3: `printk()` → `terminal_putchar()` (Lines 297, 189)
+
+For each character in the format string:
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| 8.n | 301-304 | `for (p = format; ...)` | Iterate through format string. |
+| 8.n.1 | 303 | `terminal_putchar(*p)` | **Jump to Line 189.** |
+| 8.n.1.1 | 190 | `history = ...buffer` | Get current screen's buffer. |
+| 8.n.1.2 | 192-194 | If `\n` | Increment `terminal_row`, reset `terminal_column` to 0. |
+| 8.n.1.3 | 195-265 | If `\b` | Complex backspace logic (ripple delete, wrap, etc.). |
+| 8.n.1.4 | 266-268 | Else | Write character to `history[row * 80 + col]`, increment column. |
+| 8.n.1.5 | 271-274 | Column overflow | If `col >= 80`, wrap to next row. |
+| 8.n.1.6 | 277-281 | Scroll check | If `row >= 100`, call `terminal_scroll()`. If `row >= view_row + 25`, scroll viewport. |
+| 8.n.1.7 | 283 | `refresh_screen()` | Update VGA. |
+
+---
+
+#### Phase 4: Main Loop (`while(1)`, Line 501)
+
+This loop runs **forever**, polling for input:
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| ∞.1 | 502 | `keyboard_handler()` | **Jump to Line 381.** See Phase 4a. |
+| ∞.2 | 506-520 | Heartbeat | Every 10000 iterations, update spinner at `(0, 79)`. |
+
+---
+
+#### Phase 4a: `keyboard_handler()` (Line 381)
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| ∞.1.1 | 383 | `status = inb(0x64)` | Read keyboard status port. |
+| ∞.1.2 | 386 | `if (status & 0x01)` | Check if data is available. |
+| ∞.1.3 | 387 | `scancode = inb(0x60)` | Read the scancode. |
+| ∞.1.4 | 390-391 | Key release check | If bit 7 is set, key was released (ignored). |
+| ∞.1.5 | 396-398 | F1/F2/F3 | Calls `switch_screen(0/1/2)`. See Phase 4b. |
+| ∞.1.6 | 402-420 | Arrow keys | Modify `terminal_row`/`terminal_column`, call `refresh_screen()`. |
+| ∞.1.7 | 421-432 | Up/Down | Move cursor vertically with boundary checks. |
+| ∞.1.8 | 447-462 | PageUp/PageDown | Modify `terminal_view_row`, call `refresh_screen()`. |
+| ∞.1.9 | 466-467 | Normal key | Look up ASCII in `kbdus[]`, call `terminal_putchar()`. |
+
+---
+
+#### Phase 4b: `switch_screen()` (Line 354)
+
+| Order | Line | Code | What Happens |
+|:---:|:---:|---|---|
+| S.1 | 355 | Early exit | If already on this screen, return. |
+| S.2 | 358-363 | Save state | Copy globals (`terminal_row`, etc.) to `screens[current_screen]`. |
+| S.3 | 367 | `current_screen = index` | Change active screen index. |
+| S.4 | 370-375 | Load state | Copy `screens[index]` to globals. |
+| S.5 | 377 | `refresh_screen()` | Draw new screen's viewport to VGA. |
+
+---
+
+#### Summary: Complete Execution Timeline
+
+```
+BOOT → _start (boot.S)
+         │
+         └──► kernel_main (L474)
+                 │
+                 ├──► terminal_initialize (L119)
+                 │       ├──► [Loop: Init 3 screens]
+                 │       └──► refresh_screen (L105)
+                 │               └──► update_cursor (L81)
+                 │
+                 ├──► printk × 5 (L478-483)
+                 │       └──► [Loop: terminal_putchar per char]
+                 │               └──► refresh_screen
+                 │
+                 ├──► set_input_boundary (L184)
+                 │
+                 ├──► cli (disable interrupts)
+                 │
+                 └──► while(1) FOREVER
+                         │
+                         ├──► keyboard_handler (L381)
+                         │       ├──► switch_screen? → refresh_screen
+                         │       ├──► arrow keys? → refresh_screen
+                         │       ├──► PageUp/Down? → refresh_screen
+                         │       └──► normal key? → terminal_putchar
+                         │                               └──► refresh_screen
+                         │
+                         └──► Heartbeat spinner update
+```
+
+---
+
 ### File: `boot.S`
 
 **Purpose:** The Multiboot header and assembly entry point.
