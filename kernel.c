@@ -197,8 +197,9 @@ void terminal_putchar(char c) {
         if (terminal_column > 0) {
              /* Handle "Full Line" Edge Case: 
                 If we are at column 79 and there is a character there (e.g. we just wrapped back to a full line),
-                backspace should delete THIS character first, rather than moving left. */
-             if (terminal_column == VGA_WIDTH - 1) {
+                backspace should delete THIS character first, rather than moving left. 
+                EXCEPTION: Row 0, Col 79 is the Heartbeat. Don't try to delete it. Treat it as if it wasn't there. */
+             if (terminal_column == VGA_WIDTH - 1 && !(terminal_row == 0 && terminal_column == 79)) {
                  uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
                  if ((entry & 0xFF) != ' ') {
                      history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
@@ -227,6 +228,9 @@ void terminal_putchar(char c) {
             size_t prev_row = terminal_row - 1;
             int found_col = -1;
             for (int x = VGA_WIDTH - 1; x >= 0; x--) {
+                /* Ignore Heartbeat at (0,79) - it is not "content" to jump to */
+                if (prev_row == 0 && x == (int)VGA_WIDTH - 1) continue;
+
                 uint16_t entry = history[prev_row * VGA_WIDTH + x];
                 if ((entry & 0xFF) != ' ') {
                     found_col = x;
