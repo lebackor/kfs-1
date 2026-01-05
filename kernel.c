@@ -184,12 +184,25 @@ void terminal_putchar(char c) {
 		terminal_row++;
 		terminal_column = 0;
 	} else if (c == '\b') {
+	} else if (c == '\b') {
         /* Check Protection */
         if (terminal_row < input_start_row || (terminal_row == input_start_row && terminal_column <= input_start_col)) {
             return;
         }
 
         if (terminal_column > 0) {
+             /* Handle "Full Line" Edge Case: 
+                If we are at column 79 and there is a character there (e.g. we just wrapped back to a full line),
+                backspace should delete THIS character first, rather than moving left. */
+             if (terminal_column == VGA_WIDTH - 1) {
+                 uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
+                 if ((entry & 0xFF) != ' ') {
+                     history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
+                     refresh_screen();
+                     return;
+                 }
+             }
+
             terminal_column--;
             
             /* Ripple Delete (in history buffer) */
@@ -206,13 +219,31 @@ void terminal_putchar(char c) {
             
         } else if (terminal_row > 0) {
             /* Backspace Wrap */
-            /* Standard Behavior: Go to the last column of the previous line. */
-            /* Don't scan for text, don't guess. Just go there. */
-            
+            /* Scan previous line for end of text to avoid jumping to empty void */
+            size_t prev_row = terminal_row - 1;
+            int found_col = -1;
+            for (int x = VGA_WIDTH - 1; x >= 0; x--) {
+                uint16_t entry = history[prev_row * VGA_WIDTH + x];
+                if ((entry & 0xFF) != ' ') {
+                    found_col = x;
+                    break;
+                }
+            }
+
             terminal_row--;
-            terminal_column = VGA_WIDTH - 1;
             
-            history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
+            if (found_col == -1) {
+                terminal_column = 0;
+            } else {
+                terminal_column = found_col + 1;
+                 /* If the previous line is full (found at 79), we land AT 79.
+                    Standard logic would force us to 80 -> 79.
+                    Logic: if found at 79, we land on 79. 
+                    Unlike before, we do NOT delete the char at 79 immediately.
+                    Users can press backspace again to trigger the "Full Line" logic above. */
+                if (terminal_column >= VGA_WIDTH) terminal_column = VGA_WIDTH - 1;
+            }
+            // Non-destructive wrap: Do not overwrite with space yet.
         }
         
         /* Auto-scroll up if we backspaced out of view */
