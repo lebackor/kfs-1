@@ -29,6 +29,10 @@ size_t terminal_row;
 size_t terminal_column;
 uint8_t terminal_color;
 
+/* Protection boundaries */
+size_t input_start_row = 0;
+size_t input_start_col = 0;
+
 /* --- Hardware Colors --- */
 enum vga_color {
 	VGA_COLOR_BLACK = 0, VGA_COLOR_BLUE = 1, VGA_COLOR_GREEN = 2, VGA_COLOR_CYAN = 3,
@@ -108,11 +112,18 @@ void terminal_scroll() {
 		terminal_buffer[(VGA_HEIGHT - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
 	}
 	terminal_row = VGA_HEIGHT - 1;
+
+    /* Update input protection boundary so it moves up with the text */
+    if (input_start_row > 0) {
+        input_start_row--;
+    } else {
+        /* Boundry scrolled off screen */
+        input_start_row = 0;
+        input_start_col = 0;
+    }
 }
 
-/* Protection boundaries */
-size_t input_start_row = 0;
-size_t input_start_col = 0;
+
 
 void set_input_boundary() {
     input_start_row = terminal_row;
