@@ -439,7 +439,7 @@ void kernel_main(void) {
 	printk("Features: %s, %s, %s\n", "Scroll", "Colors", "Printf");
 	printk("Press F1/F2/F3 to switch screens.\n");
 	printk("Arrow Keys to move, Backspace to delete.\n");
-	printk("Type something: ");
+	printk("Type something:");
     
     /* Set the boundary so user cannot delete the text above */
     void set_input_boundary();
