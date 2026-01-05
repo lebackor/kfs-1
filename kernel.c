@@ -125,7 +125,11 @@ void terminal_initialize(void) {
         screens[i].view_row = 0;
         screens[i].input_start_row = 0;
         screens[i].input_start_col = 0;
-		screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        
+        /* Color Themes per Screen */
+        if (i == 0) screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
+        else if (i == 1) screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
+        else screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
 		for (size_t y = 0; y < HISTORY_LINES; y++) {
 			for (size_t x = 0; x < VGA_WIDTH; x++) {
 				screens[i].buffer[y * VGA_WIDTH + x] = vga_entry(' ', screens[i].color);
