@@ -21,6 +21,8 @@ typedef struct {
     size_t view_row;  // Top visible row (0 .. HISTORY_LINES - VGA_HEIGHT)
 	uint8_t color;
 	uint16_t buffer[80 * 100]; // History buffer
+    size_t input_start_row;
+    size_t input_start_col;
 } ScreenState;
 
 ScreenState screens[3]; // We support 3 screens (F1, F2, F3)
@@ -119,7 +121,10 @@ void terminal_initialize(void) {
 	for(int i=0; i<3; i++) {
 		screens[i].row = 0;
 		screens[i].column = 0;
+		screens[i].column = 0;
         screens[i].view_row = 0;
+        screens[i].input_start_row = 0;
+        screens[i].input_start_col = 0;
 		screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
 		for (size_t y = 0; y < HISTORY_LINES; y++) {
 			for (size_t x = 0; x < VGA_WIDTH; x++) {
@@ -183,7 +188,6 @@ void terminal_putchar(char c) {
 	if (c == '\n') {
 		terminal_row++;
 		terminal_column = 0;
-	} else if (c == '\b') {
 	} else if (c == '\b') {
         /* Check Protection */
         if (terminal_row < input_start_row || (terminal_row == input_start_row && terminal_column <= input_start_col)) {
@@ -347,6 +351,8 @@ void switch_screen(int screen_index) {
 	screens[current_screen].column = terminal_column;
     screens[current_screen].view_row = terminal_view_row;
 	screens[current_screen].color = terminal_color;
+    screens[current_screen].input_start_row = input_start_row;
+    screens[current_screen].input_start_col = input_start_col;
     /* Buffer is already up to date since we write to it directly */
 
 	/* Switch index */
@@ -357,6 +363,8 @@ void switch_screen(int screen_index) {
 	terminal_column = screens[current_screen].column;
     terminal_view_row = screens[current_screen].view_row;
 	terminal_color = screens[current_screen].color;
+    input_start_row = screens[current_screen].input_start_row;
+    input_start_col = screens[current_screen].input_start_col;
 	
 	refresh_screen();
 }
