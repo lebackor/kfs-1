@@ -141,6 +141,68 @@ The execution sequence from power-on to the main loop is:
 
 ## Code Walkthrough
 
+### Execution Flow Diagram: `kernel.c`
+
+```mermaid
+flowchart TD
+    subgraph Initialization
+        KM[kernel_main] --> TI[terminal_initialize]
+        TI --> RS1[refresh_screen]
+        RS1 --> UC1[update_cursor]
+        KM --> PK1[printk - Welcome Message]
+        PK1 --> TPC1[terminal_putchar]
+        TPC1 --> RS2[refresh_screen]
+        KM --> SIB[set_input_boundary]
+    end
+
+    subgraph MainLoop["Main Loop (while 1)"]
+        KM --> ML{Main Loop}
+        ML --> KH[keyboard_handler]
+        ML --> HB[Heartbeat Update]
+    end
+
+    subgraph KeyboardHandling["keyboard_handler"]
+        KH --> |F1/F2/F3| SS[switch_screen]
+        SS --> RS3[refresh_screen]
+        KH --> |Arrow Keys| ARROW[Move Cursor]
+        ARROW --> RS4[refresh_screen]
+        KH --> |PageUp/Down| PAGE[Scroll Viewport]
+        PAGE --> RS5[refresh_screen]
+        KH --> |Normal Key| TPC2[terminal_putchar]
+    end
+
+    subgraph CharacterOutput["terminal_putchar"]
+        TPC2 --> |Newline| NL[Increment Row]
+        TPC2 --> |Backspace| BS{Backspace Logic}
+        BS --> |Col > 0| RD[Ripple Delete]
+        BS --> |Col == 0| WRAP[Smart Wrap to Prev Line]
+        TPC2 --> |Normal Char| WC[Write to Buffer]
+        NL --> SCROLL{Need Scroll?}
+        WC --> SCROLL
+        SCROLL --> |Yes| TS[terminal_scroll]
+        TS --> RS6[refresh_screen]
+        SCROLL --> |No| RS7[refresh_screen]
+    end
+
+    subgraph ScreenRefresh["refresh_screen"]
+        RS7 --> MM[memmove: History -> VGA]
+        MM --> UC2[update_cursor]
+    end
+
+    style KM fill:#f9f,stroke:#333,stroke-width:2px
+    style ML fill:#bbf,stroke:#333,stroke-width:2px
+    style TPC2 fill:#bfb,stroke:#333,stroke-width:2px
+    style RS7 fill:#fbb,stroke:#333,stroke-width:2px
+```
+
+**Legend:**
+- **Pink**: Entry point (`kernel_main`)
+- **Blue**: Main loop
+- **Green**: Character output logic
+- **Red**: Screen refresh (critical path)
+
+---
+
 ### File: `boot.S`
 
 **Purpose:** The Multiboot header and assembly entry point.
