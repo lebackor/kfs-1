@@ -363,47 +363,220 @@ BOOT → _start (boot.S)
 
 ---
 
-### File: `boot.S`
+### File: `boot.S` — Step-by-Step Execution
 
-**Purpose:** The Multiboot header and assembly entry point.
+**Purpose:** The Multiboot header and assembly entry point. This is the **first code that runs** after GRUB loads the kernel.
 
-| Section/Symbol | Description |
+#### Line-by-Line Breakdown
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 6-10 | `.set ALIGN, MEMINFO, FLAGS, MAGIC, CHECKSUM` | Define constants for the Multiboot header. |
+| 9 | `MAGIC = 0x1BADB002` | The "magic number" GRUB searches for. |
+| 10 | `CHECKSUM = -(MAGIC + FLAGS)` | Ensures header integrity (must sum to 0). |
+
+**Section: `.multiboot` (Lines 13-17)**
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 14 | `.align 4` | Align to 4-byte boundary (required by Multiboot). |
+| 15-17 | `.long MAGIC, FLAGS, CHECKSUM` | The actual header bytes GRUB reads. |
+
+**Section: `.bss` (Lines 20-24)**
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 21 | `.align 16` | Align stack to 16-byte boundary (x86 calling convention). |
+| 22-24 | `stack_bottom`, `.skip 16384`, `stack_top` | Reserve 16KB of uninitialized memory for the kernel stack. |
+
+**Section: `.text` — Entry Point `_start` (Lines 27-63)**
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 28-29 | `.global _start` | Export `_start` as the entry point symbol. |
+| 32 | `mov $stack_top, %esp` | **Set stack pointer.** The CPU needs a stack for function calls. |
+| 38-39 | `pushl $0; popf` | **Reset EFLAGS.** Clears all CPU flags to a known state. |
+| 42 | `pushl %ebx` | Push pointer to Multiboot info structure (passed by GRUB). |
+| 44 | `pushl %eax` | Push Multiboot magic value (should be `0x2BADB002`). |
+| 47 | `call kernel_main` | **Jump to C code.** Execution continues in `kernel.c`. |
+| 59-61 | `cli; hlt; jmp 1b` | If `kernel_main` ever returns, halt the CPU forever. |
+
+#### Execution Flow
+
+```
+GRUB → Jumps to _start
+         │
+         ├──► Set ESP = stack_top (Line 32)
+         │
+         ├──► Reset EFLAGS (Lines 38-39)
+         │
+         ├──► Push EBX, EAX (Multiboot info) (Lines 42-44)
+         │
+         └──► CALL kernel_main (Line 47)
+                 │
+                 └──► [Execution continues in kernel.c]
+```
+
+---
+
+### File: `linker.ld` — Step-by-Step Explanation
+
+**Purpose:** Tells the linker how to arrange sections in the final binary. Without this, the kernel would not be loadable.
+
+#### Line-by-Line Breakdown
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 7 | `ENTRY(_start)` | Tells the linker that `_start` is the entry point. The ELF header will point here. |
+| 15 | `. = 1M` | **Set load address to 1MB.** This is a convention for x86 kernels (below 1MB is reserved for BIOS, VGA, etc.). |
+
+**Section Definitions (Lines 20-43)**
+
+| Line | Section | What Goes Here |
+|:---:|---|---|
+| 20-24 | `.text` | Executable code. Includes `.multiboot` (must be early!) and all functions. |
+| 27-30 | `.rodata` | Read-only data. String literals, constants. |
+| 33-36 | `.data` | Initialized global variables. |
+| 39-43 | `.bss` | Uninitialized data (zero-filled). Includes the stack. |
+
+#### Memory Layout (After Linking)
+
+```
+Address         Section
+───────────────────────────
+0x00100000 (1MB)  .text (code)
+                  .rodata (constants)
+                  .data (globals)
+                  .bss (stack, uninitialized)
+───────────────────────────
+```
+
+> [!IMPORTANT]
+> The `.multiboot` section is placed FIRST inside `.text` so GRUB can find the magic number within the first 8KB of the binary.
+
+---
+
+### File: `io.h` — Step-by-Step Explanation
+
+**Purpose:** Provides inline assembly wrappers for CPU I/O port instructions. These are essential for communicating with hardware.
+
+#### Line-by-Line Breakdown
+
+**Function: `outb(port, val)` (Lines 10-13)**
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 10 | `static inline void outb(...)` | Inline function (no function call overhead). |
+| 12 | `__asm__ volatile("outb %0, %1" ...)` | Execute the `OUT` instruction. |
+| 12 | `: : "a"(val), "Nd"(port)` | `val` goes in `AL` register, `port` goes in `DX` (or immediate). |
+
+**Function: `inb(port)` (Lines 19-26)**
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 19 | `static inline uint8_t inb(...)` | Inline function returning a byte. |
+| 21 | `uint8_t ret;` | Variable to hold the result. |
+| 22-24 | `__asm__ volatile("inb %1, %0" ...)` | Execute the `IN` instruction. |
+| 23 | `: "=a"(ret)` | Output: result stored in `AL`, copied to `ret`. |
+| 24 | `: "Nd"(port)` | Input: port number. |
+| 25 | `return ret;` | Return the byte read from the port. |
+
+#### How These Are Used
+
+| Function | Used For |
 |---|---|
-| `.multiboot` | Contains the magic number (`0x1BADB002`), flags, and checksum for GRUB. |
-| `.bss: stack_bottom / stack_top` | Reserves 16KB for the kernel stack. |
-| `.text: _start` | The entry point. Sets up the stack, pushes Multiboot info to the C function, and calls `kernel_main`. |
-| `cli; hlt` | After `kernel_main` returns (it never should), halt the CPU. |
+| `outb(0x3D5, pos)` | Set VGA cursor position. |
+| `outb(0x3D4, 0x0F)` | Select VGA cursor low byte register. |
+| `inb(0x60)` | Read keyboard scancode. |
+| `inb(0x64)` | Read keyboard status register. |
 
 ---
 
-### File: `linker.ld`
+### File: `keyboard.h` — Step-by-Step Explanation
 
-**Purpose:** Tells the linker how to arrange sections in the final binary.
+**Purpose:** Maps keyboard scancodes (raw hardware codes) to ASCII characters.
 
--   **`ENTRY(_start)`:** Specifies the entry point symbol.
--   **`. = 1M`:** Places the kernel at the 1MB physical address mark (standard for x86 kernels).
--   **Section Order:** `.text` (code) → `.rodata` (read-only data) → `.data` (initialized data) → `.bss` (uninitialized data/stack).
+#### Line-by-Line Breakdown
+
+| Line | Code | What Happens |
+|:---:|---|---|
+| 5 | `unsigned char kbdus[128] = {...}` | Declare a 128-element array for scancode → ASCII mapping. |
+| 7 | `0, 27, '1', '2', ...` | Index 0: unused. Index 1: ESC (ASCII 27). Index 2-11: number row. |
+| 8 | `'\\b'` | Index 14: Backspace key. |
+| 9 | `'\\t'` | Index 15: Tab key. |
+| 11 | `'\\n'` | Index 28: Enter key. |
+| 14-15 | `'\\'', '\\\\', ...` | Quote, backslash, and other special characters. |
+| 19 | `' '` | Index 57: Space bar. |
+| 21-42 | `0, 0, 0, ...` | Function keys, arrow keys, etc. are mapped to 0 (handled separately in code). |
+
+#### How Scancodes Work
+
+When you press a key:
+1.  The keyboard controller sends a **scancode** to I/O port `0x60`.
+2.  `keyboard_handler()` reads it with `inb(0x60)`.
+3.  It looks up `kbdus[scancode]` to get the ASCII character.
+4.  If it's 0, the key is special (F1, Arrow, etc.) and handled with `if` statements.
+
+#### Scancode Examples
+
+| Key | Scancode | `kbdus[scancode]` |
+|---|:---:|---|
+| `A` | 0x1E (30) | `'a'` |
+| `Enter` | 0x1C (28) | `'\n'` |
+| `Backspace` | 0x0E (14) | `'\b'` |
+| `F1` | 0x3B (59) | `0` (handled specially) |
+| `Up Arrow` | 0x48 (72) | `0` (handled specially) |
 
 ---
 
-### File: `io.h`
+### File: `Makefile` — Step-by-Step Explanation
 
-**Purpose:** Inline assembly wrappers for I/O port access.
+**Purpose:** Automates the build process. Defines how to compile, link, and run the kernel.
 
-| Function | Description |
-|---|---|
-| `outb(port, val)` | Write byte `val` to I/O `port`. |
-| `inb(port)` | Read and return a byte from I/O `port`. |
+#### Variables (Lines 1-33)
 
----
+| Line | Variable | Purpose |
+|:---:|---|---|
+| 1 | `CC = gcc` | C compiler. |
+| 2 | `AS = as` | GNU assembler. |
+| 3 | `LD = ld` | GNU linker. |
+| 14 | `CFLAGS = -m32 -ffreestanding ...` | Compiler flags for bare-metal 32-bit code. |
+| 18 | `ASFLAGS = --32` | Assembler flag for 32-bit mode. |
+| 23 | `LDFLAGS = -m elf_i386 -T linker.ld` | Linker flags: 32-bit ELF, use custom linker script. |
+| 31-32 | `KERNEL`, `ISO` | Output filenames: `kfs.bin`, `kfs.iso`. |
 
-### File: `keyboard.h`
+#### Targets (Lines 36-89)
 
-**Purpose:** Maps scancodes (hardware codes from the keyboard) to ASCII characters.
+| Target | Command | What Happens |
+|---|---|---|
+| `all` | `make` | Build `kfs.bin`. |
+| `$(KERNEL)` | Link step | Combine `boot.o` and `kernel.o` into `kfs.bin`. |
+| `%.o: %.S` | `as --32 boot.S -o boot.o` | Assemble `boot.S`. |
+| `%.o: %.c` | `gcc -m32 ... kernel.c -o kernel.o` | Compile `kernel.c`. |
+| `iso` | Docker + grub-mkrescue | Build bootable ISO. |
+| `iso_inner` | Inside Docker | Create GRUB config, run `grub-mkrescue`. |
+| `qemu` | `qemu-system-i386 -cdrom kfs.iso` | Run the ISO in QEMU. |
+| `clean` | `rm -f ...` | Delete all build artifacts. |
 
--   `kbdus[128]`: An array where `kbdus[scancode]` gives the ASCII character.
--   Special keys (like Backspace, Tab, Enter) are mapped to their escape codes (`\b`, `\t`, `\n`).
--   Function keys (F1-F12), arrow keys, etc., are handled separately in `keyboard_handler()`.
+#### Build Flow
+
+```
+make iso
+    │
+    ├──► as --32 boot.S → boot.o
+    │
+    ├──► gcc -m32 kernel.c → kernel.o
+    │
+    ├──► ld -m elf_i386 -T linker.ld boot.o kernel.o → kfs.bin
+    │
+    └──► docker run ... grub-mkrescue → kfs.iso
+
+make qemu
+    │
+    └──► qemu-system-i386 -cdrom kfs.iso
+             │
+             └──► BIOS → GRUB → _start → kernel_main
+```
 
 ---
 
