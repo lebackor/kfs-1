@@ -4,14 +4,13 @@ LD = ld # Linker GNU
 
 # CFLAGS :
 #   -m32                : cible x86 32-bit
-#   -ffreestanding      : environnement "freestanding" (pas d'OS / pas de libc supposée)
+#   -ffreestanding      : environnement "freestanding" (pas d'OS / pas de libc)
 #   -fno-builtin        : interdit les builtins implicites (memcpy, etc.)
-#   -fno-exceptions     : pas d’exceptions C++ (inoffensif ici mais OK)
 #   -fno-stack-protector: désactive la protection de pile (souvent dépendante de libc/runtime)
 #   -nostdlib           : ne pas lier les libs standard
 #   -nodefaultlibs      : ne pas lier les libs par défaut
 #   -Wall -Wextra       : warnings utiles
-CFLAGS = -m32 -ffreestanding -fno-builtin -fno-exceptions -fno-stack-protector -nostdlib -nodefaultlibs -Wall -Wextra
+CFLAGS = -m32 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -nodefaultlibs -Wall -Wextra
 
 # ASFLAGS :
 #   --32 : assemble en 32-bit

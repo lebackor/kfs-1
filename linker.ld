@@ -14,8 +14,7 @@ SECTIONS
 	   loaded at by the bootloader. */
 	. = 1M;
 
-	/* First put the multiboot header, as it is required to be put very early
-	   early in the image or the bootloader won't recognize the file format.
+	/* Place en premier la section multiboot dans l'image, c'est necessaire pour que le bootloader (GRUB) detecte le format
 	   Next we'll put the .text section. */
 	.text BLOCK(4K) : ALIGN(4K)
 	{
