@@ -121,7 +121,6 @@ void terminal_initialize(void) {
 	for(int i=0; i<3; i++) {
 		screens[i].row = 0;
 		screens[i].column = 0;
-		screens[i].column = 0;
         screens[i].view_row = 0;
         screens[i].input_start_row = 0;
         screens[i].input_start_col = 0;
