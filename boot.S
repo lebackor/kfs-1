@@ -51,17 +51,7 @@ _start:
 	/* appel de la fonction kernel_main (kernel.c) */
 	call kernel_main
 
-	/* 
-	 * If the system has nothing more to do, put the computer into an
-	 * infinite loop. To be perfectly clear:
-	 * 1. Disable interrupts with cli (clear interrupt enable in eflags).
-	 *    They are already disabled by the bootloader, so this is not needed
-	 *    but it doesn't harm.
-	 * 2. Wait for the next interrupt with hlt (halt instruction).
-	 *    Since they are disabled, this will lock up the computer.
-	 * 3. Jump to the hlt instruction if it ever wakes up.
-	 */
-	 /*Permet de gerer le cas ou kernel_main return (ca ne doit pas arriver normalement) boucle infinie*/
+	/*Permet de gerer le cas ou kernel_main return (ca ne doit pas arriver normalement) boucle infinie*/
 	cli
 1:	hlt
 	jmp 1b
