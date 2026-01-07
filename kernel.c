@@ -8,9 +8,15 @@
 #include "io.h"
 #include "keyboard.h"
 
+/* --- Port mapping --- */
+static const uint16_t STATUS_KEYBOARD_PORT = 0x64; // Port status : lire l'état si le bit de status est a 1 -> il y'a une entree clavier a lire sur le port 0x60
+static const uint16_t DATA_KEYBOARD_PORT = 0x60; // Port data : Permet de lire la touche clavier (Presse/relache)
+static const uint16_t CURSOR_INDEX = 0x3D4; // Port index : On y ecris le numero de registre inerne qu'on veut modifier
+static const uint16_t CURSOR_DATA  = 0x3D5; // Port data : On ecrit la valeur qu'on veut mettre dans le registre selectionne par 0X3D4
+
 /* --- System Constants --- */
-static const size_t VGA_WIDTH = 80;
-static const size_t VGA_HEIGHT = 25;
+static const size_t VGA_WIDTH = 80; // Largeur du terminal 80
+static const size_t VGA_HEIGHT = 25; // Hauteur du terminal 25
 static const size_t HISTORY_LINES = 100;
 uint16_t* vga_buffer = (uint16_t*) 0xB8000;
 
@@ -25,20 +31,20 @@ typedef struct {
     size_t input_start_col;
 } ScreenState;
 
-ScreenState screens[3]; // We support 3 screens (F1, F2, F3)
+ScreenState screens[3]; // 3 screens (F1, F2, F3)
 int current_screen = 0;
 
-/* Global current state (matches the visible hardware) */
-size_t terminal_row;
-size_t terminal_column;
-size_t terminal_view_row;
+/* Etat actuel */
+size_t terminal_row; // Position relative du curseur ligne
+size_t terminal_column; // Position relative du curseur colonne
+size_t terminal_view_row; // index de ligne qui dit a partir de quelle ligne de l'historique on affiche l’ecran
 uint8_t terminal_color;
 
-/* Protection boundaries */
-size_t input_start_row = 0;
-size_t input_start_col = 0;
+/* Protection */
+size_t input_start_row = 0; // ligne ou debute l'entree utilisateur avant ca read-only
+size_t input_start_col = 0; // colonne ou debute l'entree utilisateur avant ca read-only
 
-/* --- Hardware Colors --- */
+/* --- Couleur --- */
 enum vga_color {
 	VGA_COLOR_BLACK = 0, VGA_COLOR_BLUE = 1, VGA_COLOR_GREEN = 2, VGA_COLOR_CYAN = 3,
 	VGA_COLOR_RED = 4, VGA_COLOR_MAGENTA = 5, VGA_COLOR_BROWN = 6, VGA_COLOR_LIGHT_GREY = 7,
@@ -55,7 +61,6 @@ static inline uint16_t vga_entry(unsigned char uc, uint8_t color) {
 	return (uint16_t) uc | (uint16_t) color << 8;
 }
 
-/* --- Helper: Memory Move (since we have no libc) --- */
 void* memmove(void* dstptr, const void* srcptr, size_t size) {
 	unsigned char* dst = (unsigned char*) dstptr;
 	const unsigned char* src = (const unsigned char*) srcptr;
@@ -76,43 +81,42 @@ size_t strlen(const char* str) {
 }
 
 /* --- Hardware Cursor --- */
-/* --- Hardware Cursor --- */
-/* Update cursor to physical position on screen. Hide if off-screen. */
+/* Actualise la position du curseur */
 void update_cursor(int x, int y) {
-    /* Calculate physical row relative to viewport */
+    /* Calcul la position du cursor par rapport a la view actuel*/
     int physical_row = y - terminal_view_row;
     
+    /* Si la ROW est entre 0 et 24 on est dans l'ecran*/
     if (physical_row >= 0 && physical_row < (int)VGA_HEIGHT) {
+        /* pos du curseur * VGA_WIDTH(tableau en 1D) + x(terminal column)*/
         uint16_t pos = physical_row * VGA_WIDTH + x;
-        outb(0x3D4, 0x0F);
-        outb(0x3D5, (uint8_t) (pos & 0xFF));
-        outb(0x3D4, 0x0E);
-        outb(0x3D5, (uint8_t) ((pos >> 8) & 0xFF));
+        /* On doit ecrire la position du curseur dans 0x0F pour la partie basse et 0x0E pour la partie haute car le curseur peut etre place de 0 a VGA_WIDTH * VGA_HEIGHT donc plus de 255 donc besoint de 2 octects */
+        outb(CURSOR_INDEX, 0x0F);
+        /*  */
+        outb(CURSOR_DATA, (uint8_t) (pos & 0xFF));
+        outb(CURSOR_INDEX, 0x0E);
+        outb(CURSOR_DATA, (uint8_t) ((pos >> 8) & 0xFF));
     } else {
-        /* Move cursor off-screen (e.g. 26, 0) if it's not in view */
-        /* standard trick: set to 2000 (after 80*25) */
+        /* Cache le curseur si il est hors screen */
         uint16_t pos = 2000;
-        outb(0x3D4, 0x0F);
-        outb(0x3D5, (uint8_t) (pos & 0xFF));
-        outb(0x3D4, 0x0E);
-        outb(0x3D5, (uint8_t) ((pos >> 8) & 0xFF));
+        outb(CURSOR_INDEX, 0x0F);
+        outb(CURSOR_DATA, (uint8_t) (pos & 0xFF));
+        outb(CURSOR_INDEX, 0x0E);
+        outb(CURSOR_DATA, (uint8_t) ((pos >> 8) & 0xFF));
     }
 }
 
-/* --- Terminal Logic --- */
-/* --- Terminal Logic --- */
-/* Copy current viewport from history buffer to VGA memory */
+/* Copie la vue actuel depuis l'historique dans la memoire VGA */
 void refresh_screen() {
     uint16_t* history = screens[current_screen].buffer;
-    /* Determine start offset in history buffer */
+    /* Calcul de le debut de l'affichage de l'historique (* VGA_WIDTH car historique est un tableau simple donc ca permet de "simuler" un tableau en 2D) */
     size_t start_offset = terminal_view_row * VGA_WIDTH;
     
-    /* Copy VGA_HEIGHT lines to VGA buffer */
-    /* Note: If history is not full or view_row is large, ensure we don't read past end? 
-       HISTORY_LINES is fixed, view_row bounded. */
+    /* Copie l'historique du screen dans le buffer VGA (Affichage sur l'ecran) a partir de l'offset de debut et pour une taille de Hauteur * Largeur * 2
+       *2 car chaque cellule = 2 octects (octect 0 = caractere, octect 1 = attribut (couleur..)) */
     memmove(vga_buffer, &history[start_offset], VGA_WIDTH * VGA_HEIGHT * 2);
     
-    /* Also update cursor since view changed */
+    /* Update du curseur */
     update_cursor(terminal_column, terminal_row);
 }
 
@@ -132,7 +136,7 @@ void terminal_initialize(void) {
         else screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
 		for (size_t y = 0; y < HISTORY_LINES; y++) {
 			for (size_t x = 0; x < VGA_WIDTH; x++) {
-				screens[i].buffer[y * VGA_WIDTH + x] = vga_entry(' ', screens[i].color);
+				screens[i].buffer[y * VGA_WIDTH + x] = vga_entry(0, screens[i].color);
 			}
 		}
 	}
@@ -141,7 +145,7 @@ void terminal_initialize(void) {
 	terminal_column = 0;
     terminal_view_row = 0;
 	terminal_color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
-	/* copy blank state to vga memory */
+
 	refresh_screen();
 }
 
@@ -162,7 +166,7 @@ void terminal_scroll() {
         }
         /* Clear last line */
         for (size_t x = 0; x < VGA_WIDTH; x++) {
-            history[(HISTORY_LINES - 1) * VGA_WIDTH + x] = vga_entry(' ', terminal_color);
+            history[(HISTORY_LINES - 1) * VGA_WIDTH + x] = vga_entry(0, terminal_color);
         }
         
         terminal_row = HISTORY_LINES - 1;
@@ -189,76 +193,76 @@ void set_input_boundary() {
 void terminal_putchar(char c) {
     uint16_t* history = screens[current_screen].buffer;
     
+    /* Si retour a la ligne on passe a la ligne suivante */
 	if (c == '\n') {
 		terminal_row++;
 		terminal_column = 0;
+    /* Si backspace */
 	} else if (c == '\b') {
-        /* Check Protection */
+        /* Impossible d'effacer si on est dans un zone read-only */
         if (terminal_row < input_start_row || (terminal_row == input_start_row && terminal_column <= input_start_col)) {
             return;
         }
 
+        /* Si on est pas en tout debut de ligne */
         if (terminal_column > 0) {
-             /* Handle "Full Line" Edge Case: 
-                If we are at column 79 and there is a character there (e.g. we just wrapped back to a full line),
-                backspace should delete THIS character first, rather than moving left. 
-                EXCEPTION: Row 0, Col 79 is the Heartbeat. Don't try to delete it. Treat it as if it wasn't there. */
+            /* Permet si on est en column 79 et qu'il y'a un caractere de le supprimer sans reculer le cursor. (Si on est sur le heartbeat on ne le supprime pas on passe a la suite) */
              if (terminal_column == VGA_WIDTH - 1 && !(terminal_row == 0 && terminal_column == 79)) {
                  uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
-                 if ((entry & 0xFF) != ' ') {
-                     history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(' ', terminal_color);
+                 if ((entry & 0xFF) != 0) {
+                     history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(0, terminal_color);
                      refresh_screen();
                      return;
                  }
-             }
-
+            }
+            
+            /* Recul le curseur */
             terminal_column--;
             
-            /* Ripple Delete (in history buffer) */
+            /* Position qu'on va supprimer */
             size_t start_pos = terminal_row * VGA_WIDTH + terminal_column;
             
-            /* Protect Heartbeat: If on row 0 (logical), don't pull index 79 into 78 */
+            /* Si on est sur le heartbeat on ne le decale pas d'ou la ternaire */
             size_t max_col = (terminal_row == 0) ? (VGA_WIDTH - 2) : (VGA_WIDTH - 1);
             size_t end_of_line = terminal_row * VGA_WIDTH + max_col;
             
+            /* On decale toute la ligne a partir de start_pos lors d'une suppression*/
             for (size_t i = start_pos; i < end_of_line; i++) {
                 history[i] = history[i+1];
             }
-            history[end_of_line] = vga_entry(' ', terminal_color);
+            /* C'est le dernier caractere qui sera mis a 0 */
+            history[end_of_line] = vga_entry(0, terminal_color);
             
-        } else if (terminal_row > 0) {
-            /* Backspace Wrap */
-            /* Scan previous line for end of text to avoid jumping to empty void */
+        } else if (terminal_row > 0) { // Si on peut remonter dans les lignes
+            /* Si on doit remonter on cherche le premier caractere qui n'est pas un 0 et on deplace le curseur a cet endroit comme si on supprimait le /n */
             size_t prev_row = terminal_row - 1;
             int found_col = -1;
+            /* On checher dans la ligne au dessus le premnier caractere*/
             for (int x = VGA_WIDTH - 1; x >= 0; x--) {
                 /* Ignore Heartbeat at (0,79) - it is not "content" to jump to */
                 if (prev_row == 0 && x == (int)VGA_WIDTH - 1) continue;
 
                 uint16_t entry = history[prev_row * VGA_WIDTH + x];
-                if ((entry & 0xFF) != ' ') {
+                if ((entry & 0xFF) != 0) {
                     found_col = x;
                     break;
                 }
             }
 
+            /* On remonte le curseur d'une ligne */
             terminal_row--;
-            
+            /* Si pas de caractere trouve dans la colonne (2 /n d'affile) on met le cursor au debut de la colonne*/
             if (found_col == -1) {
                 terminal_column = 0;
             } else {
+                /* On met le cursor apres le caractere trouve */
                 terminal_column = found_col + 1;
-                 /* If the previous line is full (found at 79), we land AT 79.
-                    Standard logic would force us to 80 -> 79.
-                    Logic: if found at 79, we land on 79. 
-                    Unlike before, we do NOT delete the char at 79 immediately.
-                    Users can press backspace again to trigger the "Full Line" logic above. */
+                 /* Si la ligne est pleine de caractere alors on met le curseur a la place 79 sur le caractere en question  plutot que a +1 ce qu ne serait pas possible */
                 if (terminal_column >= VGA_WIDTH) terminal_column = VGA_WIDTH - 1;
             }
-            // Non-destructive wrap: Do not overwrite with space yet.
         }
         
-        /* Auto-scroll up if we backspaced out of view */
+        /* Scroll si en effacant  si terminal row et terminal_view_row ne sont plus alignee */
         if (terminal_row < terminal_view_row) {
              terminal_view_row = terminal_row;
         }
@@ -267,15 +271,16 @@ void terminal_putchar(char c) {
 		history[terminal_row * VGA_WIDTH + terminal_column] = vga_entry(c, terminal_color);
 		terminal_column++;
 	}
-
+    /* Retour a la ligne si on a une ligne complete */
 	if (terminal_column >= VGA_WIDTH) {
 		terminal_column = 0;
 		terminal_row++;
 	}
     
-    /* Handle scrolling / viewing logic */
+    /* SI on a plus de ligne que de place dans le buffer on supprime la plus ancienne et on ajoute la nouvelle */
     if (terminal_row >= HISTORY_LINES) {
 		terminal_scroll(); // Hard shift
+    /* Encore de la place dans l'historique mais on depasse la vue de 25 lignes */
 	} else if (terminal_row >= terminal_view_row + VGA_HEIGHT) {
         terminal_scroll(); // View shift
     }
@@ -292,8 +297,7 @@ void terminal_writestring(const char* data) {
 	terminal_write(data, strlen(data));
 }
 
-/* --- Printf Implementation --- */
-/* A minimal implementation of printf supporting %s, %d, %x, %c */
+/* --- Printk --- */
 void printk(const char* format, ...) {
 	va_list args;
 	va_start(args, format);
@@ -349,24 +353,21 @@ void printk(const char* format, ...) {
 	va_end(args);
 }
 
-/* --- Screen Switching --- */
-/* --- Screen Switching --- */
 void switch_screen(int screen_index) {
 	if (screen_index == current_screen) return;
 	
-	/* Save current screen state */
+	/* Save les donnees du screens actuel avant de switch */
 	screens[current_screen].row = terminal_row;
 	screens[current_screen].column = terminal_column;
     screens[current_screen].view_row = terminal_view_row;
 	screens[current_screen].color = terminal_color;
     screens[current_screen].input_start_row = input_start_row;
     screens[current_screen].input_start_col = input_start_col;
-    /* Buffer is already up to date since we write to it directly */
 
 	/* Switch index */
 	current_screen = screen_index;
 
-	/* Restore new screen state */
+	/* Update les global avec les data du nouveau screen */
 	terminal_row = screens[current_screen].row;
 	terminal_column = screens[current_screen].column;
     terminal_view_row = screens[current_screen].view_row;
@@ -379,63 +380,74 @@ void switch_screen(int screen_index) {
 
 /* --- Keyboard Handling --- */
 void keyboard_handler() {
-    /* Read status from keyboard controller */
-    uint8_t status = inb(0x64);
+    /* Lis le status du controller clavier */
+    uint8_t status = inb(STATUS_KEYBOARD_PORT);
     
-    /* If status bit 0 is set, data is available */
+    /* Si le bit 0 est set -> Il y'a une data a lire sur le DATA_PORT */
     if (status & 0x01) {
-        uint8_t scancode = inb(0x60);
+        /* Lis la touche clavier */
+        uint8_t scancode = inb(DATA_KEYBOARD_PORT);
         
-        /* Check if key released (highest bit set) - ignore for now */
+        /* Le dernier bit du scancode permet de savoir si la touche est appuye ou relache 1 si elle est relachee 0 si elle est appuyee */
         if (scancode & 0x80) {
-            // Key release logic
         } else {
-			/* Key Pressed */
+			/* Touche pressee */
 			
-            /* F1, F2, F3 for screen switching */
+            /* SI F1, F2, F3 on switch d'ecran */
             if (scancode == 0x3B) { switch_screen(0); return; }
             if (scancode == 0x3C) { switch_screen(1); return; }
             if (scancode == 0x3D) { switch_screen(2); return; }
 
-            /* Arrow Keys (Extended 0xE0 scancodes usually, but simpler set 1 check) */
             /* Up: 0x48, Left: 0x4B, Right: 0x4D, Down: 0x50 */
             if (scancode == 0x4B) { // Left
-                /* Constraint: Don't move left into protected area */
+                /* Si on est a la limite gauche de la ou on peut ecrire en terme de colonne et de ligne*/
                 if (terminal_row == input_start_row && terminal_column <= input_start_col) return;
-                
+                /* Si on est pas sur la premiere colonne on peut revenir en arriere */
                 if (terminal_column > 0) terminal_column--;
-                refresh_screen(); // Calls update_cursor
+                refresh_screen();
                 return;
             }
             if (scancode == 0x4D) { // Right
-                /* Constraint: Don't move right into empty void */
-                /* Check if there is a character at the current position */
+                /* On n'autorise pas le deplacement a droite si c'est un vide (zone non remplie) */
                 uint16_t* history = screens[current_screen].buffer;
                 uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
-                if ((entry & 0xFF) == ' ') return; // End of text on this line?
+                /* Si le curseur est sur un espace alors on ne fait rien */
+                if ((entry & 0xFF) == 0) return;
                 
+                /* Si le curseur est en dessous de 79 alors on accepte le deplacement vers la droite */
                 if (terminal_column < VGA_WIDTH - 1) terminal_column++;
-                refresh_screen(); // Calls update_cursor
+                /* Sinon on passe a la ligne du dessous */
+                else {
+                    terminal_row++;
+                    terminal_column = 0;
+                }
+                refresh_screen();
                 return;
             }
             if (scancode == 0x48) { // Up
-                /* Constraint: Don't go up into read-only history */
-                if (terminal_row <= input_start_row) return;
+                /* Si la colonne d'au dessus contient un vide alors on n'autorise pas le deplacement vers le bas */
+                uint16_t* history = screens[current_screen].buffer;
+                uint16_t entry = history[(terminal_row - 1) * VGA_WIDTH + terminal_column];
+                if ((entry & 0xFF) == 0 && terminal_row >= input_start_row) return; /* Next line is empty */
 
+                /* Si le curseur est dans une zone read_only on ne remonte pas */
+                if (terminal_row <= input_start_row) return;
+                /* Si on est pas tout en haut alors on remonte */
                 if (terminal_row > 0) terminal_row--;
                 
-                /* Auto-scroll up */
+                /* Remonte l'ecran en actualisant terminal_view_row avec terminal_row */
                 if (terminal_row < terminal_view_row) terminal_view_row = terminal_row;
 
                 refresh_screen();
                 return;
             }
             if (scancode == 0x50) { // Down
-                /* Constraint: Don't go down into empty void */
-                 uint16_t* history = screens[current_screen].buffer;
-                 uint16_t entry = history[(terminal_row + 1) * VGA_WIDTH + 0];
-                 if ((entry & 0xFF) == ' ' && terminal_row >= input_start_row) return; /* Next line is empty */
+                /* Si la colonne d'en dessous contient un vide alors on n'autorise pas le deplacement vers le bas */
+                uint16_t* history = screens[current_screen].buffer;
+                uint16_t entry = history[(terminal_row + 1) * VGA_WIDTH + terminal_column];
+                if ((entry & 0xFF) == 0 && terminal_row >= input_start_row) return; /* Next line is empty */
 
+                /* Si on est pas au debut de l'historique */
                 if (terminal_row < HISTORY_LINES - 1) terminal_row++;
                 
                 /* Auto-scroll down */
@@ -445,6 +457,7 @@ void keyboard_handler() {
                 return;
             }
             if (scancode == 0x49) { // Page Up
+                /* Deplace uniquement la ligne de debut d'affichage*/
                 if (terminal_view_row > 0) {
                     terminal_view_row--;
                     refresh_screen();
@@ -462,7 +475,7 @@ void keyboard_handler() {
                 return;
             }
 
-            /* Normal Typing */
+            /* Caractere normnal */
             if (scancode < 128 && kbdus[scancode]) {
                 terminal_putchar(kbdus[scancode]);
             }
@@ -472,7 +485,7 @@ void keyboard_handler() {
 
 /* --- Main --- */
 void kernel_main(void) {
-	/* Initialize terminal interface */
+	/* Init fonction */
 	terminal_initialize();
 
 	printk("KFS-1 with Bonus 42\n");
@@ -480,38 +493,31 @@ void kernel_main(void) {
 	printk("Features: %s, %s, %s\n", "Scroll", "Colors", "Printf");
 	printk("Press F1/F2/F3 to switch screens.\n");
 	printk("Arrow Keys to move, Backspace to delete.\n");
-	printk("Type something:");
+	printk("Type something:\n");
     
-    /* Set the boundary so user cannot delete the text above */
+    /* Permet de delimiter la zone qui est en read_only */
     void set_input_boundary();
     set_input_boundary();
 
-    /* Disable Interrupts: We are polling, and we have no IDT yet.
-     * If we enable interrupts (sti), the CPU will crash on the first timer tick! */
-    asm volatile("cli");
-
-	/* Heartbeat counter to prove kernel is running */
+	/* Heartbeat pour montrer que ca tourne */
     unsigned char spinner[] = {'|', '/', '-', '\\'};
     int spin_idx = 0;
     int tick = 0;
 
-    /* Flush keyboard buffer before starting */
+    /* Clean le port de lecture clavier */
     while(inb(0x64) & 0x1) inb(0x60);
 
 	while(1) {
         keyboard_handler();
         
-        /* Update heartbeat every ~10000 loops */
-        /* direct buffer access used */
+        /* Update le heartbeat tout les 10000 tours */
         tick++;
         if (tick % 10000 == 0) {
-            /* We need to update the history buffer AND the VGA buffer if visible */
             size_t heartbeat_idx = 0 * VGA_WIDTH + 79;
             uint16_t val = vga_entry(spinner[spin_idx], vga_entry_color(VGA_COLOR_LIGHT_RED, VGA_COLOR_BLACK));
             
             screens[current_screen].buffer[heartbeat_idx] = val;
-            
-            /* If row 0 is visible, update VGA directly */
+
             if (screens[current_screen].view_row == 0) {
                  vga_buffer[heartbeat_idx] = val;
             }
