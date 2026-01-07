@@ -4,8 +4,7 @@
 #include <stdint.h>
 
 /* 
- * outb: Write a byte to an I/O port 
- * Used for: Moving cursor, sending commands to hardware
+ * outb: Ecrit un byte dans un I/O port 
  */
 static inline void outb(uint16_t port, uint8_t val)
 {
@@ -13,8 +12,7 @@ static inline void outb(uint16_t port, uint8_t val)
 }
 
 /* 
- * inb: Read a byte from an I/O port
- * Used for: Reading keyboard scancodes
+ * inb: Lis un byte depuis un I/O port
  */
 static inline uint8_t inb(uint16_t port)
 {
