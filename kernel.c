@@ -1,7 +1,3 @@
-/*
- * kernel.c - Full Featured Kernel (Bonuses Implemented)
- */
-
 #include <stddef.h>
 #include <stdint.h>
 #include <stdarg.h>
@@ -22,11 +18,11 @@ uint16_t* vga_buffer = (uint16_t*) 0xB8000;
 
 /* --- State Management --- */
 typedef struct {
-	size_t row;       // Logical cursor row (0 .. HISTORY_LINES-1)
+	size_t row;       // (0 .. HISTORY_LINES-1)
 	size_t column;
-    size_t view_row;  // Top visible row (0 .. HISTORY_LINES - VGA_HEIGHT)
+    size_t view_row;  // ligne haute visible (0 .. HISTORY_LINES - VGA_HEIGHT)
 	uint8_t color;
-	uint16_t buffer[80 * 100]; // History buffer
+	uint16_t buffer[80 * 100]; // Historique
     size_t input_start_row;
     size_t input_start_col;
 } ScreenState;
@@ -130,7 +126,7 @@ void terminal_initialize(void) {
         screens[i].input_start_row = 0;
         screens[i].input_start_col = 0;
         
-        /* Color Themes per Screen */
+        /* une couleur pas screens */
         if (i == 0) screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREY, VGA_COLOR_BLACK);
         else if (i == 1) screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_GREEN, VGA_COLOR_BLACK);
         else screens[i].color = vga_entry_color(VGA_COLOR_LIGHT_CYAN, VGA_COLOR_BLACK);
@@ -140,7 +136,7 @@ void terminal_initialize(void) {
 			}
 		}
 	}
-	/* load screen 0 */
+	/* Commence sur screen 0 */
 	terminal_row = 0;
 	terminal_column = 0;
     terminal_view_row = 0;
@@ -155,27 +151,27 @@ void terminal_initialize(void) {
 void terminal_scroll() {
     uint16_t* history = screens[current_screen].buffer;
     
+    /* Si on est plus dans l'historique on decale tout d'une ligne et on efface la pigne la plus ancienne de l'historique*/
     if (terminal_row >= HISTORY_LINES) {
-        /* We hit the hard limit of our history buffer.
-           Shift everything up by 1 line (discarding top line of history) */
-           
+
+        /* On decale toute les ligne de 1 (on copie chaque ligne d'apres dans la ligne actuel et donc la premiere disparait) */
         for (size_t y = 0; y < HISTORY_LINES - 1; y++) {
             for (size_t x = 0; x < VGA_WIDTH; x++) {
                 history[y * VGA_WIDTH + x] = history[(y + 1) * VGA_WIDTH + x];
             }
         }
-        /* Clear last line */
+        /* On clear completement la derniere ligne pour qu'on puisse ecrire */
         for (size_t x = 0; x < VGA_WIDTH; x++) {
             history[(HISTORY_LINES - 1) * VGA_WIDTH + x] = vga_entry(0, terminal_color);
         }
         
         terminal_row = HISTORY_LINES - 1;
         
-        /* Protection boundary must slide back too, since the world moved up */
+        /* Decale la zone read-only */
         if (input_start_row > 0) input_start_row--;
     }
     
-    /* Ensure view follows cursor if it went off the bottom */
+    /* SI le curseur est hors vue decale la view pour le faire apparaitre */
     if (terminal_row >= terminal_view_row + VGA_HEIGHT) {
         terminal_view_row = terminal_row - VGA_HEIGHT + 1;
     }
