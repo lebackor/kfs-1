@@ -144,9 +144,9 @@ void terminal_initialize(void) {
 	refresh_screen();
 }
 
-/* Updated scroll logic: 
-   1. If we are just moving down but within history limits, scroll the VIEWPORT.
-   2. If we hit the absolute end of history buffer, shift the BUFFER. */
+/* logique de scroll:
+   1. Si on descend mais qu'on reste dans les limites de l'historique, on défile le VIEWPORT.
+   2. Si on atteint la fin absolue du buffer d'historique, on décale le BUFFER. */
 void terminal_scroll() {
     uint16_t* history = screens[current_screen].buffer;
     
@@ -201,7 +201,7 @@ void terminal_putchar(char c) {
 
         /* Si on est pas en tout debut de ligne */
         if (terminal_column > 0) {
-            /* Pnermet si on est en column 79 et qu'il y'a u caractere de le supprimer sans reculer le cursor. (Si on est sur le heartbeat on ne le supprime pas on passe a la suite) */
+            /* Permet si on est en column 79 et qu'il y'a u caractere de le supprimer sans reculer le cursor. (Si on est sur le heartbeat on ne le supprime pas on passe a la suite) */
              if (terminal_column == VGA_WIDTH - 1 && !(terminal_row == 0 && terminal_column == 79)) {
                  uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
                  if ((entry & 0xFF) != 0) {
@@ -234,7 +234,7 @@ void terminal_putchar(char c) {
             int found_col = -1;
             /* On checher dans la ligne au dessus le premnier caractere*/
             for (int x = VGA_WIDTH - 1; x >= 0; x--) {
-                /* Ignore Heartbeat at (0,79) - it is not "content" to jump to */
+                /* ignorer le heartbeat à (0,79)*/
                 if (prev_row == 0 && x == (int)VGA_WIDTH - 1) continue;
 
                 uint16_t entry = history[prev_row * VGA_WIDTH + x];
@@ -460,9 +460,9 @@ void keyboard_handler() {
                 return;
             }
             if (scancode == 0x51) { // Page Down
-                /* Don't scroll past the logical bottom of the filled buffer? 
-                   Actually, allow scrolling down to where cursor is, basically.
-                   Limit: terminal_view_row + VGA_HEIGHT < HISTORY_LINES */
+                /* pas scroller au-delà du bas du buffer rempli ?
+                   cad permettre de scroller jusqu'où se trouve le curseur.
+                   limite : terminal_view_row + VGA_HEIGHT < HISTORY_LINES */
                 if (terminal_view_row + VGA_HEIGHT < HISTORY_LINES) {
                      terminal_view_row++;
                      refresh_screen();
