@@ -10,7 +10,7 @@ LD = ld # Linker GNU
 #   -nostdlib           : ne pas lier les libs standard
 #   -nodefaultlibs      : ne pas lier les libs par défaut
 #   -Wall -Wextra       : warnings utiles
-CFLAGS = -m32 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -nodefaultlibs -Wall -Wextra
+CFLAGS = -m32 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -fno-exceptions -fno-rtti -nodefaultlibs -Wall -Wextra
 
 # ASFLAGS :
 #   --32 : assemble en 32-bit
@@ -30,6 +30,11 @@ OBJECTS = $(SOURCES_S:.S=.o) $(SOURCES_C:.c=.o)
 KERNEL = kfs.bin
 ISO = kfs.iso
 DOCKER_IMAGE = kfs-env
+
+# QEMU
+#   Lance l’ISO avec KVM (Utilisation du CPU de la machine physique pas emulation via QEMU) (reconstruit si besoin via la dépendance $(ISO)).
+qemu: $(ISO)
+	qemu-system-i386 -enable-kvm -cdrom $(ISO)
 
 # Targets
 all: $(KERNEL)
@@ -75,11 +80,6 @@ iso_inner:
 	echo '}' >> isodir/boot/grub/grub.cfg
 	grub-mkrescue -o $(ISO) isodir
 	rm -rf isodir
-
-# QEMU
-#   Lance l’ISO avec KVM (Utilisation du CPU de la machine physique pas emulation via QEMU) (reconstruit si besoin via la dépendance $(ISO)).
-qemu: $(ISO)
-	qemu-system-i386 -enable-kvm -cdrom $(ISO)
 
 clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
