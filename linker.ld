@@ -4,9 +4,8 @@ ENTRY(_start)
 /* Organise les sections des different .o dans le binaire final*/
 SECTIONS
 {
-	/* Begin putting sections at 1 MiB, a conventional place for kernels to be
-	   loaded at by the bootloader. */
-	   /* On laisse 1MiB pour placer son kernel car la zone avant est utilise pour plein de chose au boot (BIOS, structures, buffers, zones réservées, etc.)*/
+
+	/* On laisse 1MiB pour placer son kernel car la zone avant est utilise pour plein de chose au boot (BIOS, structures, buffers, zones réservées, etc.)*/
 	. = 1M;
 
 	/* Place en premier la section multiboot dans la section text du binaire final, c'est necessaire pour que le bootloader (GRUB) detecte le format.

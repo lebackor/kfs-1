@@ -10,6 +10,7 @@
 	On a le nombre magique, les flags et le checksum dans cette section.
 	Ensuite le script linker place cette partie dans les 8192 premiers octets, ensuite GRUB cherche cette signature quand il l'a trouve
 	il sait que le kernel peut etre demarre selon la convention multiboot (saute a _start et passe les pointeurs eax et ebx) */
+.section .multiboot
 .align 4
 .long MAGIC
 .long FLAGS
