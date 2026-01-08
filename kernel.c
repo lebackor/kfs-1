@@ -150,7 +150,7 @@ void terminal_initialize(void) {
 void terminal_scroll() {
     uint16_t* history = screens[current_screen].buffer;
     
-    /* Si on est plus dans l'historique on decale tout d'une ligne et on efface la pigne la plus ancienne de l'historique*/
+    /* Si on est plus dans l'historique on decale tout d'une ligne et on efface la ligne la plus ancienne de l'historique*/
     if (terminal_row >= HISTORY_LINES) {
 
         /* On decale toute les ligne de 1 (on copie chaque ligne d'apres dans la ligne actuel et donc la premiere disparait) */
@@ -201,7 +201,7 @@ void terminal_putchar(char c) {
 
         /* Si on est pas en tout debut de ligne */
         if (terminal_column > 0) {
-            /* Permet si on est en column 79 et qu'il y'a un caractere de le supprimer sans reculer le cursor. (Si on est sur le heartbeat on ne le supprime pas on passe a la suite) */
+            /* Pnermet si on est en column 79 et qu'il y'a u caractere de le supprimer sans reculer le cursor. (Si on est sur le heartbeat on ne le supprime pas on passe a la suite) */
              if (terminal_column == VGA_WIDTH - 1 && !(terminal_row == 0 && terminal_column == 79)) {
                  uint16_t entry = history[terminal_row * VGA_WIDTH + terminal_column];
                  if ((entry & 0xFF) != 0) {

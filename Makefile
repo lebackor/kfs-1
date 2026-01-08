@@ -10,7 +10,7 @@ LD = ld # Linker GNU
 #   -nostdlib           : ne pas lier les libs standard
 #   -nodefaultlibs      : ne pas lier les libs par défaut
 #   -Wall -Wextra       : warnings utiles
-CFLAGS = -m32 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -fno-exceptions -fno-rtti -nodefaultlibs -Wall -Wextra
+CFLAGS = -m32 -ffreestanding -fno-builtin -fno-stack-protector -nostdlib -fno-exceptions -nodefaultlibs -Wall -Wextra
 
 # ASFLAGS :
 #   --32 : assemble en 32-bit
