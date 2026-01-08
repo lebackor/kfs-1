@@ -77,9 +77,9 @@ iso_inner:
 	rm -rf isodir
 
 # QEMU
-#   Lance l’ISO (reconstruit si besoin via la dépendance $(ISO)).
+#   Lance l’ISO avec KVM (Utilisation du CPU de la machine physique pas emulation via QEMU) (reconstruit si besoin via la dépendance $(ISO)).
 qemu: $(ISO)
-	qemu-system-i386 -cdrom $(ISO)
+	qemu-system-i386 -enable-kvm -cdrom $(ISO)
 
 clean:
 	rm -f $(OBJECTS) $(KERNEL) $(ISO)
